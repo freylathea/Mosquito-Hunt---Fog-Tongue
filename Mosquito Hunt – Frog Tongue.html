@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mosquito Hunt – Frog Tongue</title>
+<style>
+:root{--bg:#07110d;--panel:#0e1d17;--line:#1e3a2e;--text:#e8fff3;--dim:#7fa896;--g1:#4ade80;--g2:#22c55e;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#07110d}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;overflow:hidden;touch-action:none}
+header{display:flex;align-items:center;gap:14px;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:14px;margin:10px}
+.brand{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+.brand b{font-size:15px;letter-spacing:.5px;display:block}
+.brand small{font-size:9px;color:var(--dim);letter-spacing:1px}
+.stat{text-align:center;min-width:50px}
+.stat small{display:block;font-size:9px;color:var(--dim);letter-spacing:1px}
+.stat span{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+#bar{height:3px;background:var(--g1);margin:0 10px;border-radius:3px;transform-origin:left;transition:transform .1s linear}
+.hint{text-align:center;font-size:10px;letter-spacing:1.5px;color:var(--dim);padding:8px}
+#stage{position:relative;flex:1;min-height:0;margin:0 10px 10px}
+canvas{width:100%;height:100%;display:block;border-radius:14px;cursor:crosshair}
+#overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:rgba(14,29,23,.92);border:1px solid var(--line);border-radius:20px;padding:28px 24px;text-align:center;max-width:340px;width:100%}
+.card h1{margin:8px 0 2px;font-size:26px;letter-spacing:1px}
+.card h2{margin:0 0 16px;font-size:12px;color:var(--g1);letter-spacing:3px}
+.card p{font-size:13px;color:var(--dim);line-height:1.5;margin:0 0 18px}
+button{font:inherit;cursor:pointer;border:0}
+.go{background:linear-gradient(180deg,#6ee79a,var(--g2));color:#052e16;font-weight:800;letter-spacing:1px;width:100%;padding:14px;border-radius:12px;font-size:15px}
+.mini{background:transparent;border:1px solid var(--line);color:var(--text);padding:8px 14px;border-radius:10px;font-size:12px;font-weight:700}
+.chip.on{border-color:var(--g1);color:var(--g1)}
+#dur{width:72px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px;font:inherit;font-size:13px;font-weight:700;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span style="font-size:26px">🐸</span><div><b>MOSQUITO HUNT</b><small>FROG TONGUE</small></div></div>
+  <div class="stat"><small>SCORE</small><span id="score">000</span></div>
+  <div class="stat"><small>TIME LEFT</small><span id="time">15s</span></div>
+  <div class="stat"><small>CAUGHT</small><span id="caught">0</span></div>
+  <button class="mini" id="startBtn">▶ Start</button>
+</header>
+<div id="bar"></div>
+<div class="hint">AIM AT A MOSQUITO · RELEASE TO FLICK YOUR TONGUE</div>
+<div id="stage">
+  <canvas id="c"></canvas>
+  <div id="overlay"><div class="card">
+    <div style="font-size:34px">🐸</div>
+    <h1 id="ovTitle">MOSQUITO HUNT</h1>
+    <h2 id="ovSub">FROG TONGUE</h2>
+    <p id="ovText">Catch as many as you can before time runs out.<br>Drag to aim. Release to flick your tongue!</p>
+    <div style="margin:0 0 16px"><div style="font-size:10px;color:var(--dim);letter-spacing:1.5px">CHOOSE YOUR TIME (SECONDS)</div>
+      <div style="display:flex;gap:6px;justify-content:center;align-items:center;margin-top:8px">
+        <button class="mini chip" data-s="10">10</button><button class="mini chip" data-s="15">15</button><button class="mini chip" data-s="30">30</button><button class="mini chip" data-s="60">60</button>
+        <input id="dur" type="number" min="5" max="300" value="15" inputmode="numeric" aria-label="Custom seconds">
+      </div></div>
+    <button class="go" id="goBtn">START HUNT →</button>
+  </div></div>
+</div>
+<script>
+(() => {
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  const $ = id => document.getElementById(id);
+  let DURATION = 15;
+  let W = 0, H = 0, best = 0;
+
+  const frog = { x: 0, y: 0, mouthX: 0, mouthY: 0 };
+  const state = { mosquitoes: [], toast: '', toastTime: 0, score: 0, caught: 0, timeLeft: DURATION, running: false };
+  const tongue = { mode: 'idle', ext: 0, progress: 0, duration: .2, bend: 0, caught: null, tx: 0, ty: 0 };
+  const aim = { active: false, x: 0, y: 0 };
+
+  function resize() {
+    const r = cv.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = r.width; H = r.height;
+    cv.width = W * dpr; cv.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    frog.x = W / 2; frog.y = H - 70;
+    frog.mouthX = frog.x; frog.mouthY = frog.y - 34;
+  }
+  window.addEventListener('resize', resize);
+
+  /* ---------- helpers ---------- */
+  const dist = (x1, y1, x2, y2) => Math.hypot(x1 - x2, y1 - y2);
+  function distanceToSegment(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1, dy = y2 - y1, l2 = dx * dx + dy * dy;
+    if (!l2) return dist(px, py, x1, y1);
+    let t = ((px - x1) * dx + (py - y1) * dy) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return dist(px, py, x1 + t * dx, y1 + t * dy);
+  }
+  function currentTongueTip() {
+    const k = tongue.ext * (tongue.mode === 'retracting' ? tongue.progress : 1);
+    return { x: frog.mouthX + (tongue.tx - frog.mouthX) * k, y: frog.mouthY + (tongue.ty - frog.mouthY) * k };
+  }
+  function tongueCurvePoint(t, tipX, tipY, bend) {
+    const dx = tipX - frog.mouthX, dy = tipY - frog.mouthY, len = Math.hypot(dx, dy) || 1;
+    const off = Math.sin(Math.PI * t) * bend;
+    return { x: frog.mouthX + dx * t + (-dy / len) * off, y: frog.mouthY + dy * t + (dx / len) * off };
+  }
+
+  /* ---------- catch logic (from your screenshot) ---------- */
+  function tryCatchOnTongue(tongue) {
+    if (tongue.caught) return;
+    const tip = currentTongueTip();
+    let selected = null, selectedD = Infinity;
+    let prev = { x: frog.mouthX, y: frog.mouthY };
+    for (let i = 1; i <= 9; i++) {
+      const p = tongueCurvePoint(i / 9, tip.x, tip.y, tongue.bend * .30);
+      for (const m of state.mosquitoes) {
+        if (m.attached || m.caught) continue;
+        const d = distanceToSegment(m.x, m.y, prev.x, prev.y, p.x, p.y);
+        const catchRadius = 17 + m.size * 11;
+        if (d < catchRadius && d < selectedD) { selected = m; selectedD = d; }
+      }
+      prev = p;
+    }
+    for (const m of state.mosquitoes) {
+      if (m.attached || m.caught) continue;
+      const d = dist(m.x, m.y, tip.x, tip.y);
+      if (d < 27 + m.size * 12 && d < selectedD) { selected = m; selectedD = d; }
+    }
+    if (selected) {
+      selected.caught = true; selected.attached = true;
+      tongue.caught = selected;
+      tongue.mode = 'retracting';
+      tongue.progress = 1;
+      tongue.duration = .52;
+      state.toast = '+10'; state.toastTime = .55;
+    }
+  }
+
+  /* ---------- mosquitoes ---------- */
+  function spawnMosquito(m = {}) {
+    const fromLeft = Math.random() < .5;
+    m.x = fromLeft ? -20 : W + 20;
+    m.y = 30 + Math.random() * (H * .6);
+    const sp = 50 + Math.random() * 70;
+    m.vx = (fromLeft ? 1 : -1) * sp;
+    m.vy = (Math.random() - .5) * 40;
+    m.size = .7 + Math.random() * .5;
+    m.phase = Math.random() * 6.28;
+    m.caught = false; m.attached = false;
+    return m;
+  }
+  function resetGame() {
+    state.mosquitoes = Array.from({ length: 7 }, () => { const m = spawnMosquito(); m.x = Math.random() * W; return m; });
+    state.score = 0; state.caught = 0; state.timeLeft = DURATION; state.toast = ''; state.toastTime = 0;
+    tongue.mode = 'idle'; tongue.caught = null; tongue.ext = 0;
+    updateHud();
+  }
+  function updateHud() {
+    $('score').textContent = String(state.score).padStart(3, '0');
+    $('time').textContent = Math.ceil(state.timeLeft) + 's';
+    $('caught').textContent = state.caught;
+    $('bar').style.transform = 'scaleX(' + Math.max(0, state.timeLeft / DURATION) + ')';
+  }
+
+  /* ---------- game flow ---------- */
+  function start() {
+    setDur($('dur').value);
+    resetGame();
+    state.running = true;
+    $('overlay').style.display = 'none';
+    $('startBtn').textContent = '↻ Restart';
+  }
+  function end() {
+    state.running = false;
+    best = Math.max(best, state.score);
+    $('ovTitle').textContent = 'TIME’S UP!';
+    $('ovSub').textContent = 'SCORE ' + state.score;
+    $('ovText').innerHTML = 'You caught <b>' + state.caught + '</b> mosquitoes.<br>Best: ' + best;
+    $('goBtn').textContent = 'PLAY AGAIN →';
+    $('overlay').style.display = 'flex';
+  }
+  function setDur(v) {
+    v = Math.max(5, Math.min(300, Math.round(+v) || 15));
+    DURATION = v; $('dur').value = v;
+    document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', +c.dataset.s === v));
+    if (!state.running) { state.timeLeft = v; updateHud(); }
+  }
+  document.querySelectorAll('.chip').forEach(c => c.onclick = () => setDur(c.dataset.s));
+  $('dur').addEventListener('change', e => setDur(e.target.value));
+  $('goBtn').onclick = start;
+  $('startBtn').onclick = start;
+
+  /* ---------- input ---------- */
+  function pos(e) { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+  cv.addEventListener('pointerdown', e => {
+    if (!state.running) return;
+    cv.setPointerCapture(e.pointerId);
+    const p = pos(e); aim.active = true; aim.x = p.x; aim.y = p.y;
+  });
+  cv.addEventListener('pointermove', e => { if (aim.active) { const p = pos(e); aim.x = p.x; aim.y = p.y; } });
+  const release = () => {
+    if (!aim.active) return;
+    aim.active = false;
+    if (!state.running || tongue.mode !== 'idle') return;
+    let dx = aim.x - frog.mouthX, dy = aim.y - frog.mouthY;
+    if (dy > -10) dy = -10; // always flick upward
+    const len = Math.hypot(dx, dy), reach = Math.min(len, Math.min(H * .85, 520));
+    tongue.tx = frog.mouthX + dx / len * reach;
+    tongue.ty = frog.mouthY + dy / len * reach;
+    tongue.mode = 'extending'; tongue.ext = 0; tongue.progress = 0;
+    tongue.duration = .16 + reach / 3000;
+    tongue.caught = null;
+    tongue.bend = (Math.random() - .5) * 60;
+  };
+  cv.addEventListener('pointerup', release);
+  cv.addEventListener('pointercancel', () => { aim.active = false; });
+
+  /* ---------- update ---------- */
+  function update(dt) {
+    if (!state.running) return;
+    state.timeLeft -= dt;
+    if (state.timeLeft <= 0) { state.timeLeft = 0; updateHud(); end(); return; }
+
+    for (const m of state.mosquitoes) {
+      if (m.attached) continue;
+      m.phase += dt * 6;
+      m.x += m.vx * dt;
+      m.y += (m.vy + Math.sin(m.phase) * 45) * dt;
+      m.y = Math.max(20, Math.min(H * .72, m.y));
+      if (m.x < -40 || m.x > W + 40) spawnMosquito(m);
+    }
+
+    if (tongue.mode === 'extending') {
+      tongue.ext = Math.min(1, tongue.ext + dt / tongue.duration);
+      tryCatchOnTongue(tongue);
+      if (tongue.mode === 'extending' && tongue.ext >= 1) {
+        tongue.mode = 'retracting'; tongue.progress = 1; tongue.duration = .3;
+      }
+    } else if (tongue.mode === 'retracting') {
+      tongue.progress -= dt / tongue.duration;
+      if (tongue.caught) {
+        const tip = currentTongueTip();
+        tongue.caught.x = tip.x; tongue.caught.y = tip.y;
+      }
+      if (tongue.progress <= 0) {
+        if (tongue.caught) {
+          state.score += 10; state.caught++;
+          const i = state.mosquitoes.indexOf(tongue.caught);
+          if (i >= 0) spawnMosquito(state.mosquitoes[i]);
+        }
+        tongue.caught = null; tongue.mode = 'idle'; tongue.ext = 0;
+      }
+    }
+    if (state.toastTime > 0) state.toastTime -= dt;
+    updateHud();
+  }
+
+  /* ---------- draw ---------- */
+  function drawMosquito(m, t) {
+    ctx.save(); ctx.translate(m.x, m.y); ctx.scale(m.size, m.size);
+    if (m.vx < 0) ctx.scale(-1, 1);
+    const flap = Math.sin(t * 60 + m.phase) * .5;
+    ctx.fillStyle = 'rgba(190,230,210,.55)';
+    ctx.beginPath(); ctx.ellipse(-2, -6, 11, 4, -.6 + flap, 0, 6.28); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(2, -6, 11, 4, -1.1 - flap, 0, 6.28); ctx.fill();
+    ctx.fillStyle = '#2a2f2c';
+    ctx.beginPath(); ctx.ellipse(0, 0, 9, 3.2, 0, 0, 6.28); ctx.fill();
+    ctx.beginPath(); ctx.arc(9, 0, 3, 0, 6.28); ctx.fill();
+    ctx.strokeStyle = '#2a2f2c'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(11, 1); ctx.lineTo(18, 3);
+    for (const lx of [-3, 0, 3]) { ctx.moveTo(lx, 2); ctx.lineTo(lx - 3, 9); }
+    ctx.stroke();
+    ctx.restore();
+  }
+  function drawFrog(open) {
+    const { x, y } = frog;
+    ctx.fillStyle = '#15803d';
+    ctx.beginPath(); ctx.ellipse(x - 52, y + 28, 30, 16, .3, 0, 6.28); ctx.ellipse(x + 52, y + 28, 30, 16, -.3, 0, 6.28); ctx.fill();
+    ctx.fillStyle = '#22c55e';
+    ctx.beginPath(); ctx.ellipse(x, y + 8, 58, 52, 0, 0, 6.28); ctx.fill();
+    ctx.fillStyle = '#86efac';
+    ctx.beginPath(); ctx.ellipse(x, y + 22, 34, 30, 0, 0, 6.28); ctx.fill();
+    for (const s of [-1, 1]) {
+      ctx.fillStyle = '#22c55e'; ctx.beginPath(); ctx.arc(x + s * 28, y - 38, 20, 0, 6.28); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x + s * 28, y - 40, 13, 0, 6.28); ctx.fill();
+      let ex = 0, ey = 0;
+      if (aim.active) { const a = Math.atan2(aim.y - y, aim.x - x); ex = Math.cos(a) * 4; ey = Math.sin(a) * 4; }
+      ctx.fillStyle = '#0b1f14'; ctx.beginPath(); ctx.arc(x + s * 28 + ex, y - 40 + ey, 6, 0, 6.28); ctx.fill();
+    }
+    ctx.strokeStyle = '#0b1f14'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath();
+    if (open) ctx.ellipse(x, frog.mouthY + 2, 15, 7, 0, 0, 6.28);
+    else ctx.arc(x, y - 22, 20, .2 * Math.PI, .8 * Math.PI);
+    ctx.stroke();
+  }
+  function drawTongue() {
+    if (tongue.mode === 'idle') return;
+    const tip = currentTongueTip(), pts = [];
+    for (let i = 0; i <= 12; i++) pts.push(tongueCurvePoint(i / 12, tip.x, tip.y, tongue.bend * .30));
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#f472b6'; ctx.lineWidth = 9;
+    ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.stroke();
+    ctx.fillStyle = '#fb7eb8'; ctx.beginPath(); ctx.arc(tip.x, tip.y, 8, 0, 6.28); ctx.fill();
+  }
+  function draw(t) {
+    ctx.clearRect(0, 0, W, H);
+    const g = ctx.createRadialGradient(W / 2, H, 20, W / 2, H, H);
+    g.addColorStop(0, '#12301f'); g.addColorStop(1, '#060e0a');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    for (const m of state.mosquitoes) drawMosquito(m, t);
+
+    if (aim.active && state.running && tongue.mode === 'idle') {
+      ctx.strokeStyle = 'rgba(134,239,172,.55)'; ctx.setLineDash([6, 8]); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(frog.mouthX, frog.mouthY); ctx.lineTo(aim.x, aim.y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(aim.x, aim.y, 12, 0, 6.28); ctx.moveTo(aim.x - 18, aim.y); ctx.lineTo(aim.x + 18, aim.y);
+      ctx.moveTo(aim.x, aim.y - 18); ctx.lineTo(aim.x, aim.y + 18); ctx.stroke();
+    }
+    drawTongue();
+    drawFrog(tongue.mode !== 'idle');
+
+    if (state.toastTime > 0) {
+      const a = Math.min(1, state.toastTime / .3), tip = currentTongueTip();
+      ctx.globalAlpha = a; ctx.fillStyle = '#86efac'; ctx.font = '800 26px system-ui,sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(state.toast, frog.x, frog.mouthY - 30 - (.55 - state.toastTime) * 60);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  /* ---------- loop ---------- */
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(.05, (now - last) / 1000); last = now;
+    update(dt); draw(now / 1000);
+    requestAnimationFrame(frame);
+  }
+  resize(); resetGame(); setDur(DURATION);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
